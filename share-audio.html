@@ -153,7 +153,7 @@
         conn.on("data", function (d) { if (d === "again") callListener(conn.peer); });
       });
       peer.on("error", function (e) {
-        if (e.type === "unavailable-id") status("Someone is already playing to that code. They need to stop first.");
+        if (e.type === "unavailable-id") { stop(); status("Someone else is already playing here. Wait for them to stop, then try again."); }
         else status("Connection problem: " + e.type);
       });
     };

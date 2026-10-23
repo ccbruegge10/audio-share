@@ -30,44 +30,35 @@
   const SHARE = attr("share-page", "") || (SRC ? new URL("share-audio.html", SRC).href : "");
   if (!/^https?:/.test(LISTENER)) { console.warn("[Audio share] can't find listener.html; set the listener attribute"); return; }
   const shortAddr = SHARE.replace(/^https?:\/\//, "");
-  const newCode = () => { const A = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; let c = ""; for (let i = 0; i < 5; i++) c += A[Math.floor(Math.random() * A.length)]; return c; };
+  // The code: the same for everyone, worked out from this snippet's own id in the world page (which every
+  // visitor gets identically), so it can never differ between people. A "code" setting overrides it.
+  const fixedCode = (() => {
+    const pick = String(attr("code", "")).toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (pick.length >= 4) return pick.slice(0, 8);
+    const seed = (EL.getAttribute("instance") || (location.host + location.pathname)) + "|" + KEY;
+    let h = 2166136261 >>> 0;
+    for (let i = 0; i < seed.length; i++) { h ^= seed.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+    const A = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; let c = "";
+    for (let i = 0; i < 5; i++) { c += A[h % A.length]; h = (Math.floor(h / A.length) ^ Math.imul(h, 2654435761)) >>> 0; }
+    return c;
+  })();
 
   window.addEventListener("bs-loaded", () => {
     const scene = BS.Scene.GetInstance();
     const J = (v) => JSON.stringify(v);
-    let code = "", browser = null, loadedCode = "", state = "starting", refreshUi = () => {};
+    let code = fixedCode, browser = null, loadedCode = fixedCode, state = "starting", refreshUi = () => {};
     const load = () => { if (browser && code && code !== loadedCode) { loadedCode = code; browser.url = LISTENER + "#code=" + code; } refreshUi(); };
-    scene.On("space-state-changed", (e) => {
-      for (const ch of e.detail.changes) if (ch.property === KEY + "_code" && ch.newValue) { code = ch.newValue; load(); }
-    });
-    // The room's code. It's kept with the room, and a new arrival is told it once they've joined the room
-    // (which can take a while), so: wait until I've joined, give the room's values a moment to arrive,
-    // and only make a code if the room still has none. Never replace one that exists.
-    let decided = false;
-    const decide = () => {
-      if (decided) return; decided = true;
-      if (!code) { code = newCode(); scene.SetPublicSpaceProps({ [KEY + "_code"]: code }); }
-      load();
-    };
-    const joinedRoom = () => setTimeout(decide, 2500);
-    scene.On("user-joined", (e) => {
-      const d = (e && e.detail) || {}, u = d.user || d;
-      if (u.isLocal || (scene.localUser && u.uid && u.uid === scene.localUser.uid)) joinedRoom();
-    });
-    const joinCheck = setInterval(() => {      // in case I'd joined before this was listening
-      const lu = scene.localUser;
-      if (lu && lu.id && lu.id !== "local") { clearInterval(joinCheck); joinedRoom(); }
-    }, 1000);
-    setTimeout(decide, 25000);                 // last resort
+    console.log("[Audio share] code " + code);
+    setTimeout(load, 0);
 
     scene.On("unity-loaded", async () => {
       const anchor = new BS.GameObject({ name: "AudioShare", localPosition: new BS.Vector3(POS[0], POS[1], POS[2]),
                                          localEulerAngles: new BS.Vector3(ROT[0], ROT[1], ROT[2]) });
 
-      // The hidden player (tiny page, far out of sight: it only makes sound)
-      const pObj = new BS.GameObject({ name: "AudioSharePlayer", parent: anchor, localPosition: new BS.Vector3(0, -50, 0),
-                                       localScale: new BS.Vector3(0.01, 0.01, 0.01) });
-      browser = await pObj.AddComponent(new BS.Browser({ url: "about:blank", pageWidth: 64, pageHeight: 64 }));
+      // The (hidden) player sits just behind the middle of the panel: a browser's sound comes from where it is.
+      const pObj = new BS.GameObject({ name: "AudioSharePlayer", parent: anchor, localPosition: new BS.Vector3(0, 0, 0.01),
+                                       localScale: new BS.Vector3(0.004, 0.004, 0.004) });
+      browser = await pObj.AddComponent(new BS.Browser({ url: LISTENER + "#code=" + code, pageWidth: 64, pageHeight: 64 }));
       try { browser.pageWidth = 64; browser.pageHeight = 64; browser.ToggleInteraction(false); } catch (e) {}
       pObj.On("browser-message", (e) => {
         let m; try { m = JSON.parse(e.detail); } catch (err) { return; }

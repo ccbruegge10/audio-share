@@ -12,6 +12,7 @@
   <audio id="a" autoplay></audio>
   <script>
   (function () {
+    window.addEventListener("hashchange", function () { location.reload(); });   // a new code: start again with it
     var m = location.hash.match(/code=([A-Za-z0-9]+)/), code = m ? m[1].toUpperCase() : "";
     var a = document.getElementById("a");
     var state = "starting", peer = null, conn = null, lastAgain = 0;
