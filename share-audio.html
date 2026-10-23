@@ -1,0 +1,176 @@
+<!doctype html>
+<!-- Audio Share: open this on a computer to play sound into a world. -->
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Play sound into the world</title>
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <style>
+    :root { --bg: #15131b; --card: #211e2a; --field: #18161f; --line: #3a3546; --text: #f4f2f8; --dim: #a59fb3; --accent: #e0457b; --ok: #3ccf8e; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text); font: 16px/1.5 -apple-system, system-ui, sans-serif;
+           display: flex; align-items: center; justify-content: center; padding: 16px; }
+    .card { width: 100%; max-width: 560px; background: var(--card); border-radius: 18px; padding: 28px; }
+    h1 { margin: 0 0 4px; font-size: 24px; }
+    p { margin: 0 0 18px; color: var(--dim); }
+    label { display: block; font-size: 13px; color: var(--dim); margin: 16px 0 6px; letter-spacing: .04em; text-transform: uppercase; }
+    input, select { width: 100%; padding: 12px; border-radius: 12px; border: 2px solid var(--line); background: var(--field); color: var(--text); font: 16px system-ui, sans-serif; }
+    input#code { font: 600 28px/1 ui-monospace, monospace; letter-spacing: .2em; text-transform: uppercase; text-align: center; padding: 14px; }
+    button { width: 100%; margin-top: 16px; padding: 14px; font: 600 17px system-ui, sans-serif; border: 0; border-radius: 12px; background: var(--accent); color: #fff; cursor: pointer; }
+    button.stop { background: var(--line); }
+    button.link { width: auto; margin: 8px 0 0; padding: 0; background: none; color: var(--dim); font-size: 14px; text-decoration: underline; }
+    button:disabled { opacity: .5; cursor: default; }
+    #status { margin-top: 16px; padding: 12px 14px; border-radius: 10px; background: var(--field); color: var(--dim); min-height: 48px; }
+    #status.live { color: var(--ok); }
+    .meter { height: 10px; margin-top: 12px; border-radius: 5px; background: var(--field); overflow: hidden; display: none; }
+    .meter div { height: 100%; width: 0; background: var(--ok); transition: width .08s linear; }
+    .tip { font-size: 13px; margin-top: 16px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Play sound into the world</h1>
+    <p>Type the code shown on the world's audio panel, pick where the sound comes from, and press Play.</p>
+
+    <label for="code">World code</label>
+    <input id="code" maxlength="8" autocomplete="off" spellcheck="false" placeholder="ABCDE">
+
+    <label for="src">Sound from</label>
+    <select id="src">
+      <option value="tab">A browser tab (YouTube, web radio…)</option>
+    </select>
+    <button class="link" id="list">Show my microphones and audio inputs</button>
+
+    <button id="go">Play into the world</button>
+    <button id="stop" class="stop" style="display:none">Stop</button>
+    <div class="meter" id="meter"><div></div></div>
+    <div id="status">Not playing.</div>
+
+    <p class="tip"><b>A browser tab:</b> use Chrome or Edge, pick the tab and keep "Share tab audio" ticked.
+      <br><b>Apps like Spotify or Music:</b> install a free "virtual audio cable" such as BlackHole, set the app (or your Mac's
+      sound output) to it, then pick it in the list above.
+      <br>Keep this page open while you play.</p>
+  </div>
+  <script>
+  (function () {
+    var $ = function (id) { return document.getElementById(id); };
+    var codeEl = $("code"), srcEl = $("src"), go = $("go"), stopBtn = $("stop"), statusEl = $("status"), meter = $("meter");
+    var q = new URLSearchParams(location.search).get("code");
+    if (q) codeEl.value = q.toUpperCase();
+    var peer = null, stream = null, viewers = {}, calls = {}, ac = null, meterTimer = null;
+    function status(t, live) { statusEl.textContent = t; statusEl.className = live ? "live" : ""; }
+    function count() { return Object.keys(viewers).length; }
+    function showCount() { if (stream) status("Playing into the world. " + count() + (count() === 1 ? " person is" : " people are") + " listening.", true); }
+
+    // Music settings: no voice processing (it makes music sound underwater), stereo
+    var CLEAN = { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 2, sampleRate: 48000 };
+
+    // Audio inputs (names only appear after the browser has been allowed to use one)
+    async function listInputs(ask) {
+      try {
+        if (ask) { var tmp = await navigator.mediaDevices.getUserMedia({ audio: true }); tmp.getTracks().forEach(function (t) { t.stop(); }); }
+        var devs = (await navigator.mediaDevices.enumerateDevices()).filter(function (d) { return d.kind === "audioinput" && d.deviceId; });
+        var keep = srcEl.value;
+        while (srcEl.options.length > 1) srcEl.remove(1);
+        devs.forEach(function (d, i) {
+          if (d.deviceId === "default" || d.deviceId === "communications") return;
+          var o = document.createElement("option"); o.value = "dev:" + d.deviceId; o.textContent = d.label || ("Audio input " + (i + 1)); srcEl.appendChild(o);
+        });
+        srcEl.value = [].some.call(srcEl.options, function (o) { return o.value === keep; }) ? keep : srcEl.value;
+        if (ask) { $("list").style.display = "none"; if (srcEl.options.length > 1 && srcEl.value === "tab") srcEl.selectedIndex = 1; }
+      } catch (e) { if (ask) status("Couldn't list audio inputs: the browser wasn't allowed to use them."); }
+    }
+    $("list").onclick = function () { listInputs(true); };
+    listInputs(false);
+    if (navigator.mediaDevices.addEventListener) navigator.mediaDevices.addEventListener("devicechange", function () { listInputs(false); });
+
+    async function getSound() {
+      var v = srcEl.value;
+      if (v.indexOf("dev:") === 0)
+        return navigator.mediaDevices.getUserMedia({ audio: Object.assign({ deviceId: { exact: v.slice(4) } }, CLEAN), video: false });
+      // A tab: the browser insists on a picture too, so ask for a tiny one and drop it
+      var s = await navigator.mediaDevices.getDisplayMedia({ video: { width: 320, height: 180, frameRate: 1 }, audio: CLEAN,
+                                                             systemAudio: "include", selfBrowserSurface: "exclude" });
+      s.getVideoTracks().forEach(function (t) { t.stop(); s.removeTrack(t); });
+      if (!s.getAudioTracks().length) throw new Error("noaudio");
+      return s;
+    }
+
+    function hq(sdp) {                      // stereo, music-quality Opus
+      return sdp.replace(/a=fmtp:(\d+) ([^\r\n]*useinbandfec=1[^\r\n]*)/g, function (all, pt, rest) {
+        rest = rest.replace(/;?\s*(stereo|sprop-stereo|maxaveragebitrate)=[^;]*/g, "");
+        return "a=fmtp:" + pt + " " + rest + ";stereo=1;sprop-stereo=1;maxaveragebitrate=256000";
+      });
+    }
+    function tune(c) {
+      var tries = 0;
+      (function again() {
+        var pc = c.peerConnection, s = pc && pc.getSenders().find(function (x) { return x.track && x.track.kind === "audio"; });
+        if (!s || pc.connectionState !== "connected") { if (++tries < 60) setTimeout(again, 250); return; }
+        try { var p = s.getParameters(); if (!p.encodings || !p.encodings.length) p.encodings = [{}];
+              p.encodings[0].maxBitrate = 256000; p.encodings[0].priority = "high"; s.setParameters(p).catch(function () {}); } catch (e) {}
+      })();
+    }
+    function callListener(id) {
+      if (!stream || !peer) return;
+      try { if (calls[id]) calls[id].close(); } catch (e) {}
+      var c = peer.call(id, stream, { sdpTransform: hq });
+      calls[id] = c; tune(c);
+      c.on("close", function () { delete calls[id]; });
+      c.on("error", function () { delete calls[id]; });
+    }
+
+    function startMeter() {
+      try {
+        ac = new AudioContext(); var an = ac.createAnalyser(); an.fftSize = 512;
+        ac.createMediaStreamSource(stream).connect(an);
+        var buf = new Float32Array(an.fftSize), bar = meter.firstElementChild; meter.style.display = "block";
+        meterTimer = setInterval(function () { an.getFloatTimeDomainData(buf); var pk = 0; for (var i = 0; i < buf.length; i++) pk = Math.max(pk, Math.abs(buf[i]));
+          bar.style.width = Math.min(100, Math.round(pk * 140)) + "%"; }, 80);
+      } catch (e) {}
+    }
+
+    go.onclick = async function () {
+      var code = (codeEl.value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+      if (code.length < 4) { status("Type the code from the world's audio panel first."); return; }
+      try { stream = await getSound(); }
+      catch (e) {
+        stream = null;
+        status(e && e.message === "noaudio" ? "That share had no sound. Pick a tab and keep \"Share tab audio\" ticked."
+             : e && e.name === "NotAllowedError" ? "Cancelled, or the browser wasn't allowed to use that sound." : "Couldn't use that sound source.");
+        return;
+      }
+      stream.getAudioTracks()[0].addEventListener("ended", stop);
+      go.disabled = codeEl.disabled = srcEl.disabled = true; stopBtn.style.display = "block";
+      startMeter();
+      status("Connecting…");
+      peer = new Peer("bsas-" + code.toLowerCase());
+      peer.on("open", function () { status("Playing. Waiting for the world to connect…", true); });
+      peer.on("connection", function (conn) {          // someone in the world says hello: send them the sound
+        conn.on("open", function () { viewers[conn.peer] = conn; callListener(conn.peer); showCount(); });
+        conn.on("close", function () { delete viewers[conn.peer]; showCount(); });
+        conn.on("data", function (d) { if (d === "again") callListener(conn.peer); });
+      });
+      peer.on("error", function (e) {
+        if (e.type === "unavailable-id") status("Someone is already playing to that code. They need to stop first.");
+        else status("Connection problem: " + e.type);
+      });
+    };
+
+    function stop() {
+      if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
+      stream = null; viewers = {}; calls = {};
+      if (peer) { try { peer.destroy(); } catch (e) {} peer = null; }
+      if (meterTimer) clearInterval(meterTimer); meterTimer = null;
+      if (ac) { try { ac.close(); } catch (e) {} ac = null; }
+      meter.style.display = "none";
+      go.disabled = codeEl.disabled = srcEl.disabled = false; stopBtn.style.display = "none";
+      status("Not playing.");
+    }
+    stopBtn.onclick = stop;
+    window.addEventListener("beforeunload", stop);
+  })();
+  </script>
+</body>
+</html>
