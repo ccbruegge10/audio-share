@@ -6,6 +6,7 @@
   <meta charset="utf-8">
   <title>Audio Share Listener</title>
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="config.js"></script>
   <style>html, body { margin: 0; background: #000; }</style>
 </head>
 <body>
@@ -15,7 +16,7 @@
     window.addEventListener("hashchange", function () { location.reload(); });   // a new code: start again with it
     var m = location.hash.match(/code=([A-Za-z0-9]+)/), code = m ? m[1].toUpperCase() : "";
     var a = document.getElementById("a");
-    var state = "starting", peer = null, conn = null, lastAgain = 0;
+    var state = "starting", peer = null, conn = null, lastAgain = 0, relayOn = false;
     // Ask for good stereo music quality instead of the voice-call default
     function hq(sdp) {
       return sdp.replace(/a=fmtp:(\d+) ([^\r\n]*useinbandfec=1[^\r\n]*)/g, function (all, pt, rest) {
@@ -25,7 +26,7 @@
     }
     function report() {
       try { if (window.O && typeof window.O.sendMessage === "function")
-        window.O.sendMessage("app", JSON.stringify({ from: "as", state: state, code: code, playing: !!(a.srcObject && !a.paused) })); } catch (e) {}
+        window.O.sendMessage("app", JSON.stringify({ from: "as", state: state, code: code, relay: relayOn, playing: !!(a.srcObject && !a.paused) })); } catch (e) {}
     }
     function st(s) { if (s !== state) { state = s; report(); } }
     setInterval(report, 2000);
@@ -40,9 +41,24 @@
 
     function idle() { a.pause(); a.srcObject = null; st("waiting"); }
     function blocked() { st("blocked"); }
-    function start() {
+    // Relay details (Metered TURN) from config.js, if set. Returns options for new Peer().
+    async function peerOptions() {
+      var c = window.AUDIO_SHARE_TURN || {};
+      var app = String(c.app || "").trim().replace(/^https?:\/\//, "").replace(/\.metered\.live.*$/, "");
+      var key = String(c.apiKey || "").trim();
+      if (!app || !key) return {};
+      try {
+        var ctl = new AbortController(), t = setTimeout(function () { ctl.abort(); }, 8000);
+        var r = await fetch("https://" + app + ".metered.live/api/v1/turn/credentials?apiKey=" + encodeURIComponent(key), { signal: ctl.signal });
+        clearTimeout(t);
+        var servers = await r.json();
+        if (Array.isArray(servers) && servers.length) { relayOn = true; return { config: { iceServers: servers } }; }
+      } catch (e) {}
+      return {};
+    }
+    async function start() {
       if (!code) { st("nocode"); return; }
-      peer = new Peer();
+      peer = new Peer(await peerOptions());
       peer.on("open", function () { st("waiting"); connect(); });
       peer.on("call", function (call) {
         call.answer(undefined, { sdpTransform: hq });

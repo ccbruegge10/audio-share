@@ -6,6 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Play sound into the world</title>
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="config.js"></script>
   <style>
     :root { --bg: #15131b; --card: #211e2a; --field: #18161f; --line: #3a3546; --text: #f4f2f8; --dim: #a59fb3; --accent: #e0457b; --ok: #3ccf8e; }
     * { box-sizing: border-box; }
@@ -58,10 +59,10 @@
     var codeEl = $("code"), srcEl = $("src"), go = $("go"), stopBtn = $("stop"), statusEl = $("status"), meter = $("meter");
     var q = new URLSearchParams(location.search).get("code");
     if (q) codeEl.value = q.toUpperCase();
-    var peer = null, stream = null, viewers = {}, calls = {}, ac = null, meterTimer = null;
+    var peer = null, stream = null, viewers = {}, calls = {}, ac = null, meterTimer = null, relayOn = false;
     function status(t, live) { statusEl.textContent = t; statusEl.className = live ? "live" : ""; }
     function count() { return Object.keys(viewers).length; }
-    function showCount() { if (stream) status("Playing into the world. " + count() + (count() === 1 ? " person is" : " people are") + " listening.", true); }
+    function showCount() { if (stream) status("Playing into the world. " + count() + (count() === 1 ? " person is" : " people are") + " listening." + (relayOn ? " Relay on." : ""), true); }
 
     // Music settings: no voice processing (it makes music sound underwater), stereo
     var CLEAN = { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 2, sampleRate: 48000 };
@@ -131,6 +132,21 @@
       } catch (e) {}
     }
 
+    // Relay details (Metered TURN) from config.js, if set. Returns options for new Peer().
+    async function peerOptions() {
+      var c = window.AUDIO_SHARE_TURN || {};
+      var app = String(c.app || "").trim().replace(/^https?:\/\//, "").replace(/\.metered\.live.*$/, "");
+      var key = String(c.apiKey || "").trim();
+      if (!app || !key) return {};
+      try {
+        var ctl = new AbortController(), t = setTimeout(function () { ctl.abort(); }, 8000);
+        var r = await fetch("https://" + app + ".metered.live/api/v1/turn/credentials?apiKey=" + encodeURIComponent(key), { signal: ctl.signal });
+        clearTimeout(t);
+        var servers = await r.json();
+        if (Array.isArray(servers) && servers.length) { relayOn = true; return { config: { iceServers: servers } }; }
+      } catch (e) {}
+      return {};
+    }
     go.onclick = async function () {
       var code = (codeEl.value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
       if (code.length < 4) { status("Type the code from the world's audio panel first."); return; }
@@ -145,8 +161,10 @@
       go.disabled = codeEl.disabled = srcEl.disabled = true; stopBtn.style.display = "block";
       startMeter();
       status("Connecting…");
-      peer = new Peer("bsas-" + code.toLowerCase());
-      peer.on("open", function () { status("Playing. Waiting for the world to connect…", true); });
+      var opts = await peerOptions();
+      if (!stream) return;                              // stopped while fetching
+      peer = new Peer("bsas-" + code.toLowerCase(), opts);
+      peer.on("open", function () { status("Playing. Waiting for the world to connect…" + (relayOn ? " (relay on)" : ""), true); });
       peer.on("connection", function (conn) {          // someone in the world says hello: send them the sound
         conn.on("open", function () { viewers[conn.peer] = conn; callListener(conn.peer); showCount(); });
         conn.on("close", function () { delete viewers[conn.peer]; showCount(); });
