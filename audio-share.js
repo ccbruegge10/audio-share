@@ -40,12 +40,25 @@
     scene.On("space-state-changed", (e) => {
       for (const ch of e.detail.changes) if (ch.property === KEY + "_code" && ch.newValue) { code = ch.newValue; load(); }
     });
-    // The room's code: whoever arrives to an empty room makes one; everyone after uses it
-    setTimeout(() => {
-      const others = Object.keys(scene.users || {}).filter((u) => !scene.localUser || u !== scene.localUser.uid).length;
-      if (!code || !others) { code = code && others ? code : newCode(); scene.SetPublicSpaceProps({ [KEY + "_code"]: code }); }
+    // The room's code. It's kept with the room, and a new arrival is told it once they've joined the room
+    // (which can take a while), so: wait until I've joined, give the room's values a moment to arrive,
+    // and only make a code if the room still has none. Never replace one that exists.
+    let decided = false;
+    const decide = () => {
+      if (decided) return; decided = true;
+      if (!code) { code = newCode(); scene.SetPublicSpaceProps({ [KEY + "_code"]: code }); }
       load();
-    }, 3000);
+    };
+    const joinedRoom = () => setTimeout(decide, 2500);
+    scene.On("user-joined", (e) => {
+      const d = (e && e.detail) || {}, u = d.user || d;
+      if (u.isLocal || (scene.localUser && u.uid && u.uid === scene.localUser.uid)) joinedRoom();
+    });
+    const joinCheck = setInterval(() => {      // in case I'd joined before this was listening
+      const lu = scene.localUser;
+      if (lu && lu.id && lu.id !== "local") { clearInterval(joinCheck); joinedRoom(); }
+    }, 1000);
+    setTimeout(decide, 25000);                 // last resort
 
     scene.On("unity-loaded", async () => {
       const anchor = new BS.GameObject({ name: "AudioShare", localPosition: new BS.Vector3(POS[0], POS[1], POS[2]),
@@ -122,7 +135,7 @@
 
       refreshUi = () => {
         const playing = state === "playing";
-        try { title.text = playing ? "Playing from a computer" : state === "error" ? "Can't connect right now" : "Nothing playing"; } catch (e) {}
+        try { title.text = playing ? "Playing from a computer" : state === "blocked" ? "Can't reach the computer playing" : state === "error" ? "Can't connect right now" : "Nothing playing"; } catch (e) {}
         try { disc.SetStyles({ backgroundColor: playing ? C.accent : C.button }); } catch (e) {}
         try { codeLabel.text = code || "…"; } catch (e) {}
         try { muteBtn.text = muted ? "Unmute" : "Mute"; } catch (e) {}

@@ -38,6 +38,7 @@
     });
 
     function idle() { a.pause(); a.srcObject = null; st("waiting"); }
+    function blocked() { st("blocked"); }
     function start() {
       if (!code) { st("nocode"); return; }
       peer = new Peer();
@@ -47,13 +48,27 @@
         call.on("stream", function (s) { a.srcObject = s; var p = a.play(); if (p && p.catch) p.catch(function () {}); st("playing"); });
         call.on("close", idle);
       });
-      peer.on("error", function (e) { if (e.type !== "peer-unavailable") st("error"); });
+      peer.on("error", function (e) {
+        if (e.type === "peer-unavailable") { absentAt = Date.now(); if (state === "blocked") st("waiting"); }
+        else st("error");
+      });
       peer.on("disconnected", function () { try { peer.reconnect(); } catch (e) {} });
     }
+    // One attempt at a time. If the sharer exists (the server didn't say "no such code") but no link
+    // forms within 12 s, this network can't reach theirs directly: say so, and keep trying.
+    var tryAt = 0, absentAt = 0;
     function connect() {
-      if (!peer || peer.destroyed || (conn && conn.open)) return;
-      conn = peer.connect("bsas-" + code.toLowerCase(), { reliable: true });
-      conn.on("close", function () { conn = null; idle(); });
+      if (!peer || peer.destroyed || peer.disconnected) return;
+      if (conn && conn.open) return;
+      var sharerThere = absentAt < tryAt;
+      if (conn && sharerThere && Date.now() - tryAt < 12000) return;          // still trying
+      if (conn && sharerThere && state !== "playing" && state !== "showing") blocked();
+      var old = conn; conn = null; try { if (old) old.close(); } catch (e) {}
+      tryAt = Date.now();
+      var c = peer.connect("bsas-" + code.toLowerCase(), { reliable: true });
+      conn = c;
+      c.on("open", function () { if (state === "blocked") st("waiting"); });
+      c.on("close", function () { if (conn === c) { conn = null; idle(); } });
     }
     // Keep trying until someone shares (and again after they stop)
     setInterval(function () {
