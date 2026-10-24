@@ -27,9 +27,10 @@
   const SRC = (document.currentScript && document.currentScript.src) ||
     ([...document.scripts].map((s) => s.src).find((s) => /audio-share(\.min)?\.js/.test(s)) || "");
   const LISTENER = attr("listener", "") || (SRC ? new URL("listener.html", SRC).href : "");
-  const SHARE = attr("share-page", "") || (SRC ? new URL("share-audio.html", SRC).href : "");
+  // The share page is also the folder's front page (index.html), so the address to type is just the folder
+  const SHARE = attr("share-page", "") || (SRC ? new URL("./", SRC).href : "");
   if (!/^https?:/.test(LISTENER)) { console.warn("[Audio share] can't find listener.html; set the listener attribute"); return; }
-  const shortAddr = SHARE.replace(/^https?:\/\//, "");
+  const shortAddr = SHARE.replace(/^https?:\/\//, "").replace(/\/(index\.html)?$/, "");
   // The code: the same for everyone, worked out from this snippet's own id in the world page (which every
   // visitor gets identically), so it can never differ between people. A "code" setting overrides it.
   const fixedCode = (() => {
