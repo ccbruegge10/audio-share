@@ -57,7 +57,7 @@
   (function () {
     var $ = function (id) { return document.getElementById(id); };
     var codeEl = $("code"), srcEl = $("src"), go = $("go"), stopBtn = $("stop"), statusEl = $("status"), meter = $("meter");
-    var q = new URLSearchParams(location.search).get("code");
+    var q = new URLSearchParams(location.search).get("code") || (location.hash.match(/^#(?:code=)?([A-Za-z0-9]{4,8})$/) || [])[1];
     if (q) codeEl.value = q.toUpperCase();
     var peer = null, stream = null, viewers = {}, calls = {}, ac = null, meterTimer = null, relayOn = false;
     function status(t, live) { statusEl.textContent = t; statusEl.className = live ? "live" : ""; }
@@ -135,6 +135,7 @@
     // Relay details (Metered TURN) from config.js, if set. Returns options for new Peer().
     async function peerOptions() {
       var c = window.AUDIO_SHARE_TURN || {};
+      if (Array.isArray(c.iceServers) && c.iceServers.length) { relayOn = true; return { config: { iceServers: c.iceServers } }; }
       var app = String(c.app || "").trim().replace(/^https?:\/\//, "").replace(/\.metered\.live.*$/, "");
       var key = String(c.apiKey || "").trim();
       if (!app || !key) return {};
